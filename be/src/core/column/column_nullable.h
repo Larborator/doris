@@ -93,8 +93,6 @@ public:
         _nested_column->sanity_check();
     }
 
-    void shrink_padding_chars() override;
-
     bool is_variable_length() const override { return _nested_column->is_variable_length(); }
 
     std::string get_name() const override { return "Nullable(" + _nested_column->get_name() + ")"; }
@@ -263,7 +261,7 @@ public:
     }
 
     bool structure_equals(const IColumn& rhs) const override {
-        if (const auto* rhs_nullable = typeid_cast<const ColumnNullable*>(&rhs)) {
+        if (const auto* rhs_nullable = check_and_get_column<ColumnNullable>(&rhs)) {
             return _nested_column->structure_equals(*rhs_nullable->_nested_column);
         }
         return false;

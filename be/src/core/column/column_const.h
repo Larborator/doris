@@ -124,7 +124,8 @@ public:
     void resize(size_t new_size) override { s = new_size; }
 
     MutableColumnPtr clone_resized(size_t new_size) const override {
-        return ColumnConst::create(data, new_size, false, false);
+        auto cloned_data = data->clone_resized(data->size());
+        return ColumnConst::create(std::move(cloned_data), new_size, false, false);
     }
 
     size_t size() const override { return s; }
@@ -263,7 +264,7 @@ public:
     void for_each_subcolumn(ColumnCallback callback) override { callback(data); }
 
     bool structure_equals(const IColumn& rhs) const override {
-        if (const auto* rhs_concrete = typeid_cast<const ColumnConst*>(&rhs)) {
+        if (const auto* rhs_concrete = check_and_get_column<ColumnConst>(&rhs)) {
             return data->structure_equals(*rhs_concrete->data);
         }
         return false;

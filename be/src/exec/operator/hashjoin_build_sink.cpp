@@ -110,8 +110,8 @@ Status HashJoinBuildSinkLocalState::init(RuntimeState* state, LocalSinkStateInfo
 
     _runtime_filter_producer_helper = std::make_shared<RuntimeFilterProducerHelper>(
             _should_build_hash_table, p._is_broadcast_join);
-    RETURN_IF_ERROR(_runtime_filter_producer_helper->init(state, _build_expr_ctxs,
-                                                          p._runtime_filter_descs));
+    RETURN_IF_ERROR(_runtime_filter_producer_helper->init(
+            state, _build_expr_ctxs, p._runtime_filter_descs, p._child->row_desc()));
     return Status::OK();
 }
 
@@ -814,7 +814,7 @@ Status HashJoinBuildSinkOperatorX::prepare(RuntimeState* state) {
     return VExpr::open(_build_expr_ctxs, state);
 }
 
-Status HashJoinBuildSinkOperatorX::sink(RuntimeState* state, Block* in_block, bool eos) {
+Status HashJoinBuildSinkOperatorX::sink_impl(RuntimeState* state, Block* in_block, bool eos) {
     auto& local_state = get_local_state(state);
     SCOPED_TIMER(local_state.exec_time_counter());
     COUNTER_UPDATE(local_state.rows_input_counter(), (int64_t)in_block->rows());

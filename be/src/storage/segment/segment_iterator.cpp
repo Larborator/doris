@@ -654,7 +654,7 @@ Status SegmentIterator::_lazy_init(Block* block) {
     }
     _current_return_columns.resize(_schema->columns().size());
 
-    _vec_init_char_column_id(block);
+    _vec_init_char_column_id();
     for (size_t i = 0; i < _schema->column_ids().size(); i++) {
         ColumnId cid = _schema->column_ids()[i];
         const auto* column_desc = _schema->column(cid);
@@ -859,7 +859,9 @@ Status SegmentIterator::_prepare_seek(const StorageReadOptions::KeyRange& key_ra
         for (const TabletColumn* col : key_columns) {
             cols.emplace_back(std::make_shared<TabletColumn>(*col));
         }
-        _seek_schema = std::make_unique<Schema>(cols, cols.size());
+        std::vector<uint32_t> column_ids(cols.size());
+        std::iota(column_ids.begin(), column_ids.end(), 0);
+        _seek_schema = std::make_unique<Schema>(cols, column_ids);
     }
     // todo(wb) need refactor here, when using pk to search, _seek_block is useless
     if (_seek_block.size() == 0) {
@@ -1366,10 +1368,14 @@ Status SegmentIterator::_apply_index_expr() {
     for (const auto& expr_ctx : _common_expr_ctxs_push_down) {
         segment_v2::AnnIndexStats ann_index_stats;
         size_t origin_rows = _row_bitmap.cardinality();
+        bool ann_range_search_executed = false;
         RETURN_IF_ERROR(expr_ctx->evaluate_ann_range_search(
                 _index_iterators, _schema->column_ids(), _column_iterators,
                 _common_expr_to_slotref_map, _row_bitmap, ann_index_stats,
-                enable_ann_index_result_cache));
+                enable_ann_index_result_cache, &ann_range_search_executed));
+        if (ann_range_search_executed) {
+            _opts.stats->ann_index_range_search_cnt++;
+        }
         _opts.stats->rows_ann_index_range_filtered += (origin_rows - _row_bitmap.cardinality());
         _opts.stats->ann_index_load_ns += ann_index_stats.load_index_costs_ns.value();
         _opts.stats->ann_index_range_search_ns += ann_index_stats.search_costs_ns.value();
@@ -1386,14 +1392,6 @@ Status SegmentIterator::_apply_index_expr() {
         _opts.stats->ann_index_range_cache_hits += ann_index_stats.range_cache_hits.value();
     }
 
-    for (auto it = _common_expr_ctxs_push_down.begin(); it != _common_expr_ctxs_push_down.end();) {
-        if ((*it)->root()->ann_range_search_executedd()) {
-            _opts.stats->ann_index_range_search_cnt++;
-            it = _common_expr_ctxs_push_down.erase(it);
-        } else {
-            ++it;
-        }
-    }
     return Status::OK();
 }
 
@@ -1820,13 +1818,6 @@ Status SegmentIterator::_lookup_ordinal_from_sk_index(const RowCursor& key, bool
 
     const auto& key_col_ids = key.schema()->column_ids();
 
-    // Clone the key once and pad CHAR fields to storage format before the binary search.
-    // _seek_block holds storage-format data where CHAR is zero-padded to column length,
-    // while RowCursor holds CHAR in compute format (unpadded). Padding once here avoids
-    // repeated allocation inside the comparison loop.
-    RowCursor padded_key = key.clone();
-    padded_key.pad_char_fields();
-
     ssize_t start_block_id = 0;
     auto start_iter = sk_index_decoder->lower_bound(index_key);
     if (start_iter.valid()) {
@@ -1854,7 +1845,7 @@ Status SegmentIterator::_lookup_ordinal_from_sk_index(const RowCursor& key, bool
     while (start < end) {
         rowid_t mid = (start + end) / 2;
         RETURN_IF_ERROR(_seek_and_peek(mid));
-        int cmp = _compare_short_key_with_seek_block(padded_key, key_col_ids);
+        int cmp = _compare_short_key_with_seek_block(key, key_col_ids);
         if (cmp > 0) {
             start = mid + 1;
         } else if (cmp == 0) {
@@ -2210,43 +2201,14 @@ bool SegmentIterator::_can_evaluated_by_vectorized(std::shared_ptr<ColumnPredica
     }
 }
 
-bool SegmentIterator::_has_char_type(const TabletColumn& column_desc) {
-    switch (column_desc.type()) {
-    case FieldType::OLAP_FIELD_TYPE_CHAR:
-        return true;
-    case FieldType::OLAP_FIELD_TYPE_ARRAY:
-        return _has_char_type(column_desc.get_sub_column(0));
-    case FieldType::OLAP_FIELD_TYPE_MAP:
-        return _has_char_type(column_desc.get_sub_column(0)) ||
-               _has_char_type(column_desc.get_sub_column(1));
-    case FieldType::OLAP_FIELD_TYPE_STRUCT:
-        for (uint32_t idx = 0; idx < column_desc.get_subtype_count(); ++idx) {
-            if (_has_char_type(column_desc.get_sub_column(idx))) {
-                return true;
-            }
-        }
-        return false;
-    default:
-        return false;
-    }
-};
-
-void SegmentIterator::_vec_init_char_column_id(Block* block) {
-    if (!_char_type_idx.empty()) {
+void SegmentIterator::_vec_init_char_column_id() {
+    if (!_is_char_type.empty()) {
         return;
     }
     _is_char_type.resize(_schema->columns().size(), false);
     for (size_t i = 0; i < _schema->num_column_ids(); i++) {
         auto cid = _schema->column_id(i);
         const TabletColumn* column_desc = _schema->column(cid);
-
-        // The additional deleted filter condition will be in the materialized column at the end of the block.
-        // After _output_column_by_sel_idx, it will be erased, so we do not need to shrink it.
-        if (i < block->columns()) {
-            if (_has_char_type(*column_desc)) {
-                _char_type_idx.emplace_back(i);
-            }
-        }
 
         if (column_desc->type() == FieldType::OLAP_FIELD_TYPE_CHAR) {
             _is_char_type[cid] = true;
@@ -2604,8 +2566,8 @@ void SegmentIterator::_update_tso_col_if_needed(const std::vector<ColumnId>& col
 
     if (_is_pred_column[tso_col_idx]) {
         // Nullable predicate column is represented as ColumnNullable(predicate_col)
-        if (auto* tso_nullable =
-                    typeid_cast<ColumnNullable*>(_current_return_columns[tso_col_idx].get())) {
+        if (auto* tso_nullable = check_and_get_column<ColumnNullable>(
+                    _current_return_columns[tso_col_idx].get())) {
             _current_return_columns[tso_col_idx]->clear();
             auto value = commit_time;
             for (size_t j = 0; j < num_rows; j++) {
@@ -2630,7 +2592,7 @@ void SegmentIterator::_update_tso_col_if_needed(const std::vector<ColumnId>& col
     auto column = Schema::get_data_type_ptr(*column_desc)->create_column();
     DCHECK(column_desc->type() == FieldType::OLAP_FIELD_TYPE_BIGINT);
 
-    if (auto* tso_nullable = typeid_cast<ColumnNullable*>(column.get())) {
+    if (auto* tso_nullable = check_and_get_column<ColumnNullable>(column.get())) {
         auto* col_ptr = assert_cast<ColumnInt64*>(&tso_nullable->get_nested_column());
         for (size_t j = 0; j < num_rows; j++) {
             col_ptr->insert_value(commit_time);
@@ -3129,8 +3091,6 @@ Status SegmentIterator::_next_batch_internal(Block* block) {
         _output_index_result_column(vir_ctxs, sel_rowid_idx, _selected_size, block);
     }
     RETURN_IF_ERROR(_materialization_of_virtual_column(block));
-    // shrink char_type suffix zero data
-    block->shrink_char_type_column_suffix_zero(_char_type_idx);
     if (_opts.read_limit > 0) {
         _rows_returned += block->rows();
     }
@@ -3240,7 +3200,6 @@ Status SegmentIterator::_process_common_expr(uint16_t* sel_rowid_idx, uint16_t& 
         common_ctxs.push_back(ctx.get());
     }
     _output_index_result_column(common_ctxs, _sel_rowid_idx.data(), _selected_size, block);
-    block->shrink_char_type_column_suffix_zero(_char_type_idx);
     RETURN_IF_ERROR(_execute_common_expr(_sel_rowid_idx.data(), _selected_size, block));
 
     if (need_mock_col) {
@@ -3643,7 +3602,6 @@ Status SegmentIterator::_materialization_of_virtual_column(Block* block) {
                     idx_in_block, block->columns(), _vir_cid_to_idx_in_block.size(),
                     column_expr->root()->debug_string());
         }
-        block->shrink_char_type_column_suffix_zero(_char_type_idx);
         if (check_and_get_column<const ColumnNothing>(
                     block->get_by_position(idx_in_block).column.get())) {
             VLOG_DEBUG << fmt::format("Virtual column is doing materialization, cid {}, col idx {}",
