@@ -43,6 +43,7 @@
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/field.h"
+#include "core/string_ref.h"
 #include "core/value/timestamptz_value.h"
 #include "exec/common/util.hpp"
 #include "exec/pipeline/pipeline_task.h"
@@ -70,12 +71,17 @@
 #include "storage/index/ann/ann_search_params.h"
 #include "storage/index/ann/ann_topn_runtime.h"
 #include "storage/index/inverted/inverted_index_parser.h"
+#include "storage/index/zone_map/zonemap_eval_context.h"
 #include "storage/segment/column_reader.h"
 
 namespace doris {
 
 class RowDescriptor;
 class RuntimeState;
+
+ZoneMapFilterResult VExpr::evaluate_zonemap_filter(const ZoneMapEvalContext& ctx) const {
+    return unsupported_zonemap_filter(ctx);
+}
 
 // NOLINTBEGIN(readability-function-cognitive-complexity)
 // NOLINTBEGIN(readability-function-size)
@@ -1042,8 +1048,8 @@ Status VExpr::evaluate_ann_range_search(
         const std::vector<std::unique_ptr<segment_v2::IndexIterator>>& index_iterators,
         const std::vector<ColumnId>& idx_to_cid,
         const std::vector<std::unique_ptr<segment_v2::ColumnIterator>>& column_iterators,
-        roaring::Roaring& row_bitmap, AnnIndexStats& ann_index_stats, bool enable_result_cache,
-        AnnRangeSearchEvaluationResult& result) {
+        size_t rows_of_segment, roaring::Roaring& row_bitmap, AnnIndexStats& ann_index_stats,
+        bool enable_result_cache, AnnRangeSearchEvaluationResult& result) {
     result = {};
     return Status::OK();
 }

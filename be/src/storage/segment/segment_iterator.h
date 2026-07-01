@@ -188,7 +188,9 @@ private:
     // calculate row ranges that satisfy requested column conditions using various column index
     [[nodiscard]] Status _get_row_ranges_by_column_conditions();
     [[nodiscard]] Status _get_row_ranges_from_conditions(RowRanges* condition_row_ranges);
-
+    [[nodiscard]] Status _apply_expr_zonemap_to_row_ranges(const VExprContextSPtrs& conjuncts,
+                                                           rowid_t min_rowid,
+                                                           RowRanges* row_ranges);
     [[nodiscard]] Status _apply_inverted_index();
     [[nodiscard]] Status _apply_inverted_index_on_column_predicate(
             std::shared_ptr<ColumnPredicate> pred,
@@ -204,7 +206,6 @@ private:
     bool _is_literal_node(const TExprNodeType::type& node_type);
 
     Status _vec_init_lazy_materialization();
-    void _vec_init_char_column_id();
 
     uint32_t segment_id() const { return _segment->id(); }
     uint32_t num_rows() const { return _segment->num_rows(); }
@@ -426,8 +427,6 @@ private:
     MutableColumns _seek_block;
 
     io::FileReaderSPtr _file_reader;
-
-    std::vector<bool> _is_char_type;
 
     // used for compaction, record selectd rowids of current batch
     uint16_t _selected_size;

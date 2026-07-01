@@ -51,16 +51,17 @@
 #include "storage/index/ann/ann_search_params.h"
 #include "storage/index/index_reader.h"
 #include "storage/index/inverted/inverted_index_reader.h"
+#include "storage/index/zone_map/zonemap_filter_result.h"
 #include "util/date_func.h"
 #include "util/unaligned.h"
 
 namespace doris {
-class BitmapFilterFuncBase;
 class BloomFilterFuncBase;
 class HybridSetBase;
 class ObjectPool;
 class RowDescriptor;
 class RuntimeState;
+class ZoneMapEvalContext;
 
 namespace segment_v2 {
 class IndexIterator;
@@ -180,6 +181,9 @@ public:
     virtual Status evaluate_inverted_index(VExprContext* context, uint32_t segment_num_rows) {
         return Status::OK();
     }
+
+    virtual ZoneMapFilterResult evaluate_zonemap_filter(const ZoneMapEvalContext& ctx) const;
+    virtual bool can_evaluate_zonemap_filter() const { return false; }
 
     // Get analyzer key for inverted index queries (overridden by VMatchPredicate)
     [[nodiscard]] virtual const std::string& get_analyzer_key() const {
@@ -326,13 +330,6 @@ public:
 
     virtual std::shared_ptr<HybridSetBase> get_set_func() const { return nullptr; }
 
-    // If this expr is a BitmapPredicate, this method will return a BitmapFilterFunc
-    virtual std::shared_ptr<BitmapFilterFuncBase> get_bitmap_filter_func() const {
-        throw Exception(Status::FatalError(
-                "Method 'get_bitmap_filter_func()' is not supported in expression: {}",
-                this->debug_string()));
-    }
-
     // fast_execute can direct copy expr filter result which build by apply index in segment_iterator
     bool fast_execute(VExprContext* context, const Selector* selector, size_t count,
                       ColumnPtr& result_column) const;
@@ -356,8 +353,9 @@ public:
             const std::vector<std::unique_ptr<segment_v2::IndexIterator>>& cid_to_index_iterators,
             const std::vector<ColumnId>& idx_to_cid,
             const std::vector<std::unique_ptr<segment_v2::ColumnIterator>>& column_iterators,
-            roaring::Roaring& row_bitmap, segment_v2::AnnIndexStats& ann_index_stats,
-            bool enable_result_cache, AnnRangeSearchEvaluationResult& result);
+            size_t rows_of_segment, roaring::Roaring& row_bitmap,
+            segment_v2::AnnIndexStats& ann_index_stats, bool enable_result_cache,
+            AnnRangeSearchEvaluationResult& result);
 
     // Prepare the runtime for ANN range search.
     // AnnRangeSearchRuntime is used to store the runtime information of ann range search.

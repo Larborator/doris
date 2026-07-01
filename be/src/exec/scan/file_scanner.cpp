@@ -795,7 +795,7 @@ Status FileScanner::_convert_to_output_block(Block* block) {
 
         // because of src_slot_desc is always be nullable, so the column_ptr after do dest_expr
         // is likely to be nullable
-        if (LIKELY(column_ptr->is_nullable())) {
+        if (LIKELY(is_column_nullable(*column_ptr))) {
             const auto* nullable_column = reinterpret_cast<const ColumnNullable*>(column_ptr.get());
             for (int i = 0; i < rows; ++i) {
                 if (filter_map[i] && nullable_column->is_null_at(i)) {
@@ -2077,6 +2077,19 @@ void FileScanner::update_realtime_counters() {
 
     _last_bytes_read_from_local = _file_cache_statistics->bytes_read_from_local;
     _last_bytes_read_from_remote = _file_cache_statistics->bytes_read_from_remote;
+}
+
+bool FileScanner::_should_update_load_counters() const {
+    if (_is_load) {
+        return true;
+    }
+    // TVF based loads (e.g. http_stream, group commit relay) plan the load source as a
+    // tvf query scan without src tuple desc, so _is_load is false. But rows filtered by
+    // the load's WHERE clause still need to be reported as unselected rows. FILE_STREAM
+    // is only reachable from such load entries, never from normal queries, so use it to
+    // identify these scanners.
+    return (_params->__isset.file_type && _params->file_type == TFileType::FILE_STREAM) ||
+           (_current_range.__isset.file_type && _current_range.file_type == TFileType::FILE_STREAM);
 }
 
 void FileScanner::_collect_profile_before_close() {

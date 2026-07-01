@@ -330,6 +330,8 @@ DECLARE_mInt32(download_low_speed_limit_kbps);
 DECLARE_mInt32(download_low_speed_time);
 // whether to download small files in batch.
 DECLARE_mBool(enable_batch_download);
+// whether to enable stream load forward endpoint for cloud group commit
+DECLARE_mBool(enable_group_commit_streamload_be_forward);
 // whether to check md5sum when download
 DECLARE_mBool(enable_download_md5sum_check);
 // download binlog meta timeout
@@ -1280,6 +1282,7 @@ DECLARE_mInt64(file_cache_remove_block_qps_limit);
 DECLARE_mInt64(file_cache_background_gc_interval_ms);
 DECLARE_mInt64(file_cache_background_block_lru_update_interval_ms);
 DECLARE_mInt64(file_cache_background_block_lru_update_qps_limit);
+DECLARE_mInt64(file_cache_background_block_lru_update_queue_max_size);
 DECLARE_mBool(enable_file_cache_async_touch_on_get_or_set);
 DECLARE_mBool(enable_reader_dryrun_when_download_file_cache);
 DECLARE_mInt64(file_cache_background_monitor_interval_ms);
@@ -1293,6 +1296,7 @@ DECLARE_mInt64(file_cache_background_lru_dump_interval_ms);
 // dump queue only if the queue update specific times through several dump intervals
 DECLARE_mInt64(file_cache_background_lru_dump_update_cnt_threshold);
 DECLARE_mInt64(file_cache_background_lru_dump_tail_record_num);
+DECLARE_mInt64(file_cache_background_lru_log_queue_max_size);
 DECLARE_mInt64(file_cache_background_lru_log_replay_interval_ms);
 DECLARE_mBool(enable_evaluate_shadow_queue_diff);
 
